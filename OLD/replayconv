@@ -1,0 +1,175 @@
+#!/usr/bin/perl
+
+#  $Id: replayconv,v 1.17 2013/11/28 05:59:46 fujiwara Exp $
+#
+#  Copyright (C) 1998-2006 Kazunori Fujiwara <fujiwara@wide.ad.jp>.
+#  All rights reserved.
+#
+#  You can redistribute it and/or modify it
+#  under either the terms of the GPL version 2.
+#  GPL is shown in <http://www.gnu.org/licenses/gpl.html>.
+#
+# This program reads BIND 9 querylog and outputs dns_replay input file.
+
+use strict;
+use Getopt::Std;
+
+my $start = -1;
+my $precision;
+my ($qname, $qclass, $qtype, $opt, $date0, $date1, $edns);
+my $opts;
+my $factor;
+
+my @sametimedata;
+my $prevtime = -1;
+undef @sametimedata;
+
+our ($opt_t, $opt_e, $opt_d);
+getopts('t:ed');
+$factor = defined($opt_t) ? $opt_t : 1;
+#print "factor=$factor [$opt_t]\n";
+#====================================================================
+my %typemap = (
+  'A' => '1',
+  'NS' => '2',
+  'MD' => '3',
+  'MF' => '4',
+  'CNAME' => '5',
+  'SOA' => '6',
+  'MB' => '7',
+  'MG' => '8',
+  'MR' => '9',
+  'NULL' => '10',
+  'WKS' => '11',
+  'PTR' => '12',
+  'HINFO' => '13',
+  'MINFO' => '14',
+  'MX' => '15',
+  'TXT' => '16',
+  'RP' => 17,
+  'AFSDB' => 18,
+  'X25' => '19',
+  'ISDN' => '20',
+  'RT' => '21',
+  'NSAP' => '22',
+  'NSAP_PTR' => '23',
+  'SIG' => '24',
+  'KEY' => '25',
+  'PX' => '26',
+  'GPOS' => '27',
+  'AAAA' => '28',
+  'LOC' => '29',
+  'NXT' => '30',
+  'EID' => '31',
+  'NIMLOC' => '32',
+  'SRV' => '33',
+  'ATMA' => '34',
+  'NAPTR' => '35',
+  'KX' => '36',
+  'CERT' => '37',
+  'A6' => '38',
+  'DNAME' => '39',
+  'SINK' => '40',
+  'OPT' => '41',
+  'APL' => '42',
+  'DS' => '43',
+  'SSHFP' => '44',
+  'IPSECKEY' => '45',
+  'RRSIG' => '46',
+  'NSEC' => '47',
+  'DNSKEY' => '48',
+  'DHCID' => '49',
+  'NSEC3' => '50',
+  'NSEC3PARAM' => '51',
+  'TLSA' => '52',
+  'NINFO' => '56',
+  'RKEY' => '57',
+  'TALINK' => '58',
+  'CDS' => '59',
+  'SPF' => '99',
+  'UINFO' => 100,
+  'UID' => 101,
+  'GIF' => 102,
+  'UNSPEC' => 103,
+  'NID' => 104,
+  'L32' => 105,
+  'L64' => 106,
+  'LP' => 107,
+  'EUI48' => 108,
+  'EUI64' => 109,
+  'TKEY' => 249,
+  'TSIG' => 250,
+  'IXFR' => '251',
+  'AXFR' => '252',
+  'MAILB' => '253',
+  'MAILA' => '254',
+  'ANY' => '255',
+  'TA' => 32768,
+  'DLV' => 32769);
+
+sub qtype_to_num
+{
+	my ($b) = @_;
+	$b =~ y/a-z/A-Z/;
+	if ($b =~ /^TYPE(\d+)$/) {
+		$b = $1;
+	} elsif (defined($typemap{$b})) {
+		$b = $typemap{$b};
+	} else {
+		$b = 0;
+	}
+	return $b;
+}
+
+while (<>) {
+	chomp;
+	if (/^.* (\d\d):(\d\d):(\d\d)(\.\d\d\d(\d\d\d)?)? .* query: (\S+) (\S+) (\S+) (\S+)(|\s*\(.*\))$/) {
+		$qname = $6; $qclass = $7; $qtype = $8; $opt = $9;
+		$date0 = $1 * 3600 + $2 * 60 + $3 + $4; $date1 = $4;
+		$qtype =~ y/A-Z/a-z/;
+		$qtype = &qtype_to_num($qtype);
+		#unless ($qname =~ /^[a-zA-Z0-9._\/-]+$/) {
+		#	print STDERR "wrong qname: $_\n";
+		#	next;
+		#}
+		if ($qtype == 0) {
+			print STDERR "wrong qtype zero: $_\n";
+			next;
+		}
+	} else {
+		print STDERR "format error: $_\n";
+		next;
+	}
+	if ($start < 0) {
+		$start = $date0;
+		if ($date1 eq "") {
+			$precision = int(1000000 / $factor);
+		} else {
+			$precision = int(1000 / $factor);
+		}
+	}
+	if ($prevtime != $date0 && $#sametimedata >= 0) {
+		&flush;
+	}
+	$prevtime = $date0;
+	$edns = ($opt =~ /E/) ? "E" : "e";
+	if ($opt_e) { $edns = 'E'; }
+	if ($opt_d) { $edns = 'D'; }
+	push @sametimedata, "$qname $qtype $edns";
+}
+&flush if ($#sametimedata >= 0);
+
+sub flush
+{
+	# flush
+	my $count = $#sametimedata + 1;
+	my $step = int($precision / $count);
+	my $sum;
+	my $step2 = int (($date0 - $prevtime) * 1000000 / $factor + 0.5) - $precision;
+	for (my $i = 0; $i < $count-1; $i++) {
+		$sum += $step;
+		print $sametimedata[$i], " ", $step, "\n";
+	}
+	print $sametimedata[$count-1], " ", $precision - $sum + $step2, "\n";
+	undef @sametimedata;
+}

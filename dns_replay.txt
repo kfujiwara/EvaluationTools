@@ -1,0 +1,19 @@
+dns_replay replays DNS query from stdin.
+
+input file format:
+  QNAME QTYPE Options WaitTime [Destination]
+
+  QNAME: domain name
+  QTYPE: unsigned number
+  Options: EDd     E=EDNS0, D=DO, d....requires Destination
+  WaitTime: wait after this query (microsec)
+  Destination: IPv4/IPv6 address (:port) ... 127.0.0.1:53 / ...
+
+-M output format
+  -M 3 (default) ... outputs queries and respones in PCAP file format
+  -M 2 ... 
+  
+  
+
+
+

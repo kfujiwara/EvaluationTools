@@ -1,0 +1,58 @@
+#!/usr/bin/perl
+
+# $Id: ParseOutput,v 1.1 2011/02/25 04:40:23 fujiwara Exp $
+
+use strict;
+
+my $input = $ARGV[0];
+
+sub dump
+{
+	my $data = shift;
+	my $topic = shift;
+	$topic .= 'length='.length($data).' [';
+	foreach my $c (unpack("C*", $data)) {
+		$topic .= sprintf " %02x", $c;
+	}
+	$topic .= ' ]';
+	print $topic, "\n";
+}
+
+sub iastr {
+    my $a = shift;
+    my $len = length($a);
+    my @a;
+
+    if ($len == 4) {
+	foreach my $k (unpack("aaaa", $a)) {
+	    push @a, ord($k);
+	}
+	return join(".", @a);
+    } elsif ($len == 16) {
+	foreach my $k (unpack("nnnnnnnn", $a)) {
+	    push @a, sprintf("%x", $k);
+	}
+	return join(":", @a);
+    }
+    return "<invalid>";
+}
+
+my $headersize = 16;
+my $header;
+my $lines = 0;
+my $fh;
+
+open(F, "$input") || die "cannot open $input:$!";
+while(read(F, $header, $headersize) == $headersize) {
+	my ($mode, $af, $plen, $tv_sec, $tv_usec, $c_port, $s_port) = unpack("aCSLLnn", $header);
+#print "Read: $mode $af $plen $tv_sec $tv_usec $c_port $s_port ";
+	my $alen = ($af == 2) ? 4 : 16;
+	my $addr;
+	my $data;
+	if (read(F, $addr, $alen) != $alen || read(F, $data, $plen) != $plen) {
+		die "short read: $!";
+	}
+	my $msg = $mode." ".&iastr($addr)." ".sprintf("%d",$s_port)." ";
+	&dump($data, $msg);
+}
+close(F);
