@@ -45,13 +45,16 @@ my $usage = "dns_replay.pl [options] [host [port]]
  -w microsec specify waittime (input mode 2/3)
  -b dom     specify base domain name (input mode 2)
  -C count   specify number of queries (input mode 2/3)
+ -4 addr    specify query source IP address
+ -6 addr    specify query source IPv6 address
+ -s port    specify query source port
  -v		    verbose
  -H -?      help
 \tinput from stdin
 \toutput to stdout\n";
 
 my %opts;
-&getopts('H?6vM:m:l:i:o:h:p:t:r:w:b:I:C:', \%opts);
+&getopts('H?vM:m:l:i:o:h:p:t:r:w:b:I:C:s:4:6:', \%opts);
 
 my $input_mode = 0;
 my $in;
@@ -270,11 +273,24 @@ sub init_wait_recv_send
 {
 	my $z = {};
 	socket (my $s4, PF_INET, SOCK_DGRAM, 0) || die "socket4: $!";
-	bind($s4, pack_sockaddr_in(0, &get_local_ipv4_address)) || die "bind4: $!";
+	my $port = 0;
+	my $addr4 = &get_local_ipv4_address;
+	my $addr6 = &get_local_ipv6_address;
+	if ($opts{'s'} > 0) { $port = $opts{'s'}; }
+	if (defined($opts{'4'})) {
+		$addr4 = inet_aton($opts{'4'});
+		if (!defined($addr4)) { die "Cannot understand option: -4 ".$opts{'4'}; }
+	}
+	if (defined($opts{'6'})) {
+		$addr6 = inet_aton($opts{'6'});
+		if (!defined($addr6)) { die "Cannot understand option: -6 ".$opts{'6'}; }
+	}
+	bind($s4, pack_sockaddr_in($port, $addr4)) || die "bind4: $!";
 	setsockopt($s4, SOL_SOCKET, SO_SNDBUF, 220*1024) || die "setsockopt:s4:$!";
 	socket (my $s6, PF_INET6, SOCK_DGRAM, 0) || die "socket6: $!";
-	bind($s6, pack_sockaddr_in6(0, &get_local_ipv6_address)) || die "bind6: $!";
+	bind($s6, pack_sockaddr_in6($port, $addr6)) || die "bind6: $!";
 	setsockopt($s6, SOL_SOCKET, SO_SNDBUF, 220*1024) || die "setsockopt:s6:$!";
+
 	$z->{s4} = $s4;
 	$z->{s6} = $s6;
 	$z->{s6_sa} = getsockname($s6);
