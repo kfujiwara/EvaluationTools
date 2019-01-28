@@ -34,7 +34,7 @@ my $mag = 1.0;
 my $count = 100;
 
 my $usage = "dns_replay.pl [options] [host [port]]
- -M mode	specify output format: 1/[2]/3=dns_replay/dns_replay2/pcap
+ -M mode	specify output format: [0]/1/2/3=noRecv/dns_replay/dns_replay2/pcap
  -I mode    specify input mode: 1/2/3=fromFile/random/version.bind
  -i file	specify input file [stdin]
  -o file	specify output file [stdout]
@@ -102,9 +102,12 @@ if ($output_format == 1) {
 	$state->{output_func} = \&output_data_replay1;
 } elsif ($output_format == 2) {
 	$state->{output_func} = \&output_data_replay2;
-} elsif (!defined($output_format) || $output_format == 3) {
+} elsif ($output_format == 3) {
 	print $out pack("NnnNNNN", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 101);
 	$state->{output_func} = \&output_data_pcap;
+} else {
+	$output_format = 0;
+	$state->{output_func} = \&output_data_none;
 }
 
 sub input_line
@@ -159,6 +162,8 @@ my $e = &gettime - $state->{start};
 
 if ($e > 0 && $state->{num_sent} > 0) {printf STDERR "Send: %d, %d.%06d sec, %f qps, %d usec\n", $state->{num_sent}, int($e/1000000),$e % 1000000, $state->{num_sent} * 1000000 / $e, $e / $state->{num_sent}; }
 print STDERR "Recv: ".$state->{num_received}."\n";
+
+sub output_data_none{}
 
 sub output_data_replay1
 {
