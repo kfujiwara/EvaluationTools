@@ -31,26 +31,45 @@ my $outfile = "";
 my $_timeout = 15*1000000;
 my $flag_rd = 0;
 my $mag = 1.0;
+my $count = 100;
 
 my $usage = "dns_replay.pl [options] [host [port]]
  -M mode	specify output format: 1/[2]/3=dns_replay/dns_replay2/pcap
+ -I mode    specify input mode: 1/2/3=fromFile/random/version.bind
  -i file	specify input file [stdin]
  -o file	specify output file [stdout]
  -h host	specify remote host
  -p port	specify remote port
  -t sec		specify timeout
  -m mag		specify magnification to waittime
- -v		verbose
+ -w microsec specify waittime (input mode 2/3)
+ -b dom     specify base domain name (input mode 2)
+ -C count   specify number of queries (input mode 2/3)
+ -v		    verbose
+ -H -?      help
 \tinput from stdin
 \toutput to stdout\n";
 
 my %opts;
-&getopts('6vM:m:l:i:o:h:p:t:r:', \%opts);
+&getopts('H?6vM:m:l:i:o:h:p:t:r:w:b:I:C:', \%opts);
 
-my $in = \*STDIN;
-if (defined($opts{'i'})) {
-	open($in, "<", $opts{'i'}) || die "cannot open: ".$opts{'i'};
+my $input_mode = 0;
+my $in;
+if (defined($opts{'I'})) {
+	$input_mode = $opts{'I'};
 }
+if ($input_mode == 1) {
+	$in = \*STDIN;
+	if (defined($opts{'i'})) {
+		open($in, "<", $opts{'i'}) || die "cannot open: ".$opts{'i'};
+	}
+}
+my $basedom = 'example.com';
+if ($opts{'b'} ne '') { $basedom = $opts{'b'}; }
+my $waittime = 1000000;
+if ($opts{'w'} > 0) { $waittime = int($opts{'w'}); }
+if ($opts{'C'} > 0) { $count = int($opts{'C'}); }
+
 my $out= \*STDOUT;
 if (defined($opts{'o'})) {
 	open($out, ">", $opts{'o'}) || die "cannot open: ".$opts{'o'};
@@ -74,6 +93,8 @@ my $lineno = 0;
 my $qid = 1;
 my $state = &init_wait_recv_send;
 
+if ($opts{'?'} || $opts{'H'} || $input_mode < 1 || $input_mode > 3) { print $usage; exit 1 };
+
 if ($output_format == 1) {
 	$state->{output_func} = \&output_data_replay1;
 } elsif ($output_format == 2) {
@@ -83,13 +104,35 @@ if ($output_format == 1) {
 	$state->{output_func} = \&output_data_pcap;
 }
 
-while(<$in>) {
+sub input_line
+{
+	if ($input_mode == 1) {
+		return <$in>;
+	}
+	if ($count-- <= 0) { return undef; }
+	if ($input_mode == 2) {
+		my $r = int(rand(9223372036854775808));
+		my $c1 = $r % 26;
+		$r = int($r/26);
+		my $c2 = $r % 26;
+		$r = int($r/26);
+		my $c3 = $r % 26;
+		$r = int($r/26);
+		return sprintf("%c%c%c%d.%s %d DE %d", $c1+65, $c2+65, $c3+65, $r, $basedom, rand 1 > 0.5 ? 24 : 1, $waittime);
+	}
+	if ($input_mode == 3) {
+		return "version.bind TXT e $waittime";
+	}
+	return undef;
+}
+
+while($_ = &input_line) {
 	$lineno++;
 	chomp;
 	#noexistence.pyon.org 16 DEd 1100 2001:2e8:602:0:2:1:0:9e
 	my @d = split(/ /);
-	if ($#d < 4) {
-		print STDERR "to few input at $lineno: $_\n";
+	if ($#d < 3) {
+		print STDERR "too few input at $lineno: $_\n";
 		exit 1;
 	}
 	my $remote;
@@ -299,6 +342,8 @@ sub packet_encode
 {
 	my ($name, $type, $flag) = @_;
 
+	my $class = 1;
+	if ($name eq "version.bind") { $class = 3; }
 	my $d = '';
 	foreach my $n (split(/\./, $name)) {
 		last if (length($n) <= 0);
@@ -311,7 +356,7 @@ sub packet_encode
 	my $p = pack("nnnnnn", $qid % 65536, $flag_rd, 1, 0, 0, $edns);
 	$qid++;
 	if ($flag =~ /D/) { $do = 1; };
-	$p .= $d.pack("nn", $type, 1);
+	$p .= $d.pack("nn", $type, $class);
 	if ($edns) {
 		$p .= chr(0).pack("nnnnn", 41, 4096, 0, $do? 32768:0, 0);
 	}

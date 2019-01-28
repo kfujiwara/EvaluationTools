@@ -1,0 +1,148 @@
+#!/usr/bin/perl
+
+#  $Id: replayanalyze,v 1.1 2009/04/01 07:25:23 fujiwara Exp $
+#
+#  Copyright (C) 1998-2006 Kazunori Fujiwara <fujiwara@wide.ad.jp>.
+#  All rights reserved.
+#
+#  You can redistribute it and/or modify it
+#  under either the terms of the GPL version 2.
+#  GPL is shown in <http://www.gnu.org/licenses/gpl.html>.
+#
+#  this program reads dns_replay output file.
+
+use strict;
+
+my @rcode = (
+	'noerror', 'formerr', 'servfail', 'nxdomain',
+	'notimpl', 'refused', 'yxdomain', 'yxrrset',
+	'nxrrset', 'notauth', 'notzone', 'rcode11',
+	'rcode12', 'rcode13', 'rcode14', 'rcode15');
+
+my $nsent = 0;
+my $nreceived = 0;
+my $ntimeout = 0;
+my $nlost = 0;
+my @_time;
+my @_name;
+my @_type;
+
+my @rcodecount;
+my $start;
+my $start0 = -1;
+my $timeout;
+my $last;
+
+my $tt;
+my $rcode;
+
+my $total = 0;
+my $total2 = 0;
+my $ttmin = -1;
+my $ttmax = -1;
+
+my $lineno = 0;
+
+my $i;
+
+for ($i = 0; $i < 16; $i++) {
+	$rcodecount[$i] = 0;
+}
+
+while(<>) {
+	$lineno++;
+	chomp;
+	my @data = split(/ /);
+	if ($data[0] eq '!') {
+		if ($data[1] eq "date") {
+			$start = $data[2];
+		}
+		$timeout = $data[2] * 1000000 if ($data[1] eq "timeout");
+	} elsif ($data[0] eq 'S') {
+		my $qid = $data[2];
+		if (defined($_name[$qid])) {
+			print "Updated: [ ", $_time[$qid], " ",  $_name[$qid], " ", $_type[$qid], " ] by [ $_ ]\n";
+			$ntimeout++;
+		}
+		$_time[$qid] = $data[1];
+		$_name[$qid] = $data[3];
+		$_type[$qid] = $data[4];
+		$nsent++;
+		$start0 = $data[1] if ($start0 < 0);
+		$last = $data[1];
+	} elsif ($data[0] eq 'R') {
+		my $qid = $data[2];
+		if (!defined($_name[$qid])) {
+			&error("unknown QID: $qid : $_");
+		}
+		if ($_name[$qid] ne $data[3] || $_type[$qid] ne $data[4]) {
+			&error("mismatch QID=$qid [ ".$_time[$qid]." ".$_name[$qid]." ".$_type[$qid]." ] by [ ".$_." ]");
+		}
+		undef $_name[$qid];
+		$tt = $data[1] - $_time[$qid];
+		if ($tt > $timeout) {
+			$ntimeout++;
+			next;
+		}
+		$rcode = $data[5];
+		$rcodecount[$rcode]++;
+		$total += $tt;
+		$total2 += $tt * $tt;
+		&error("total2 over 64bit integer") if ($total2 > 10000000000000000000);
+		if ($ttmin < 0) {
+			$ttmin = $tt;
+			$ttmax = $tt;
+		} else {
+			$ttmin = $tt if ($ttmin > $tt);
+			$ttmax = $tt if ($ttmax < $tt);
+		}
+		$nreceived++;
+		$last = $data[1];
+	}
+}
+
+sub error
+{
+	my ($msg) = @_;
+	print "line $lineno, ", $msg, "\n";
+	exit 1;
+}
+
+$nlost = $nsent - $nreceived;
+
+print "Sent: $nsent\n";
+printf("Received: %d      (%5.1f %%)\n", $nreceived, $nreceived/$nsent*100);
+printf("Timeout: %d       (%5.1f %%)\n", $ntimeout, $ntimeout/$nsent*100);
+printf("Lost: %d          (%5.1f %%)\n", $nlost, $nlost/$nsent*100);
+
+my $ranfor = ($last - $start0)/1000000;
+printf("Ran for: %.6f\n", $ranfor);
+
+my $start2 = int($start);
+my $start3 = int(($start - int($start)) * 1000000) + $start0;
+if ($start3 >= 1000000) {
+    $start2 += int($start3 / 1000000);
+}
+my $finished = $start2 + int(($last - $start0)/1000000);
+
+my $starts = localtime($start2);
+print "Started: $starts\n";
+my $finisheds = localtime($finished);
+print "Finished: $finisheds\n";
+
+my $ave = $total/$nreceived;
+my $ave2 = $total2/$nreceived;
+print "Response:\n";
+print "  maximum: ", $ttmax, "\n";
+print "  minimum: ", $ttmin, "\n";
+print "  average: ", $ave, "\n";
+print "  S.d.: ", sqrt($ave2 - $ave * $ave), "\n";
+
+my $qpf = $nsent / $ranfor;
+printf("  queries per second: %.2f\n", $qpf);
+my $rpf = $nreceived / $ranfor;
+printf("  responses per second: %.2f\n", $rpf);
+print "Rcodes:\n";
+for ($i = 0; $i < 16; $i++) {
+	print "   $rcode[$i]: $rcodecount[$i]\n" if ($rcodecount[$i] > 0);
+}
