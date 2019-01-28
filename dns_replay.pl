@@ -250,8 +250,9 @@ sub output_data_pcap
 	$udp = pack("nnn", $sport, $dport, length($buf)+8);
 	my $sum = unpack("%32n*", $saddr.$daddr.$udp.$buf.chr(0));
 	$sum += length($buf)+8+17;
-	$sum = ~(($sum & 0xffff) + ($sum >> 16));
-	$udp .= pack("n", $sum);
+	$sum = ($sum & 0xffff) + ($sum >> 16);
+	$sum = ($sum & 0xffff) + ($sum >> 16);
+	$udp .= pack("n", ~$sum);
 
 	my $len = length($ip)+length($udp)+length($buf);
   	print $out pack("NNNN", int($now/1000000), $now % 1000000, $len, $len)
