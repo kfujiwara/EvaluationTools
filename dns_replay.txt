@@ -1,18 +1,52 @@
-dns_replay replays DNS query from stdin.
+dns_replay.pl replays DNS queries
 
-input file format:
-  QNAME QTYPE Options WaitTime [Destination]
+* Input mode [ -I num ]
+  -I 1: Input from file (or stdin)
+        File format:
+	  QNAME QTYPE Options WaitTime [Destination]
+	  QNAME: domain name
+	  QTYPE: unsigned number
+	  Options: eEDd  e=NOP E=EDNS0, D=DO, d....requires Destination
+	  WaitTime: wait after this query (microsec)
+	  Destination: IPv4/IPv6 address (:port) ... 127.0.0.1:53 / ...
+  -I 2: Random Subdomain Evaluation mode
+          Requires -b base_domain_name, -w microsec, -C count, -h host
+	  dns_replay sends [A-Z][A-Z][A-Z]number.{base_domain_name} A/AAAA
+	  queries to 'host' with 'microsec' waittime
+	  number of queries is 'count'.
+            "dns_replay.pl -b example.com -w 1000 -C 500 -h 10.10.1.1"
+	     sends 500 %c%c%c%d.example.com A/AAAA queries to 10.10.1.1
+	     in 0.5 sec (1000*500 microsec).
+  -I 3: "version.bind" CH TXT mode
+          Requires -w, -C, -h
+	  dns_replay sends "version.bind" CH TXT queries to host.
 
-  QNAME: domain name
-  QTYPE: unsigned number
-  Options: EDd     E=EDNS0, D=DO, d....requires Destination
-  WaitTime: wait after this query (microsec)
-  Destination: IPv4/IPv6 address (:port) ... 127.0.0.1:53 / ...
+* Output Mode
+  -M 3: outputs queries and respones in PCAP file format
+  -M 2: outputs same as dns_replay2.c
+  -M 1: outputs same as dns_replay.c
+  -M 0: counts received packets and output statistics. (Planned)
 
--M output format
-  -M 3 (default) ... outputs queries and respones in PCAP file format
-  -M 2 ... 
-  
+* Other options
+
+ -i file    specify input file [stdin]
+ -o file    specify output file [stdout]
+ -h host    specify remote host
+ -p port    specify remote port
+ -t sec     specify timeout
+ -m mag     specify magnification to waittime
+ -w microsec specify waittime (input mode2/3)
+ -b dom     specify base domain name (input mode 2)
+ -C count   specify number of queries (input mode 2/3)
+ -4 addr    specify query source IP address
+ -6 addr    specify query source IPv6 address
+ -s port    specify query source port
+ -R         RD=1
+ -E         EDNS0
+ -D         DO=1
+ -v         verbose
+ -H -?      help
+
   
 
 

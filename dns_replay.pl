@@ -110,7 +110,7 @@ if ($output_format == 1) {
 	$state->{output_func} = \&output_data_pcap;
 } else {
 	$output_format = 0;
-	$state->{output_func} = \&output_data_none;
+	$state->{output_func} = \&output_data_count;
 }
 
 sub input_line
@@ -168,7 +168,12 @@ my $e = &gettime - $state->{start};
 if ($e > 0 && $state->{num_sent} > 0) {printf STDERR "Send: %d, %d.%06d sec, %f qps, %d usec\n", $state->{num_sent}, int($e/1000000),$e % 1000000, $state->{num_sent} * 1000000 / $e, $e / $state->{num_sent}; }
 print STDERR "Recv: ".$state->{num_received}."\n";
 
-sub output_data_none{}
+sub output_data_count
+{
+	my ($mode, $now, $s_sa, $d_sa, $buf) = @_;
+	my ($af, $saddr, $sport, $daddr, $dport);
+	
+}
 
 sub output_data_replay1
 {
