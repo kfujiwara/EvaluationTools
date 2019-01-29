@@ -34,27 +34,30 @@ my $mag = 1.0;
 my $count = 100;
 
 my $usage = "dns_replay.pl [options] [host [port]]
- -M mode	specify output format: [0]/1/2/3=noRecv/dns_replay/dns_replay2/pcap
+ -M mode    specify output format: [0]/1/2/3=noRecv/dns_replay/dns_replay2/pcap
  -I mode    specify input mode: 1/2/3=fromFile/random/version.bind
- -i file	specify input file [stdin]
- -o file	specify output file [stdout]
- -h host	specify remote host
- -p port	specify remote port
- -t sec		specify timeout
- -m mag		specify magnification to waittime
+ -i file    specify input file [stdin]
+ -o file    specify output file [stdout]
+ -h host    specify remote host
+ -p port    specify remote port
+ -t sec     specify timeout
+ -m mag     specify magnification to waittime
  -w microsec specify waittime (input mode 2/3)
  -b dom     specify base domain name (input mode 2)
  -C count   specify number of queries (input mode 2/3)
  -4 addr    specify query source IP address
  -6 addr    specify query source IPv6 address
  -s port    specify query source port
- -v		    verbose
+ -R         RD=1
+ -E         EDNS0
+ -D         DO=1
+ -v         verbose
  -H -?      help
 \tinput from stdin
 \toutput to stdout\n";
 
 my %opts;
-&getopts('H?vM:m:l:i:o:h:p:t:r:w:b:I:C:s:4:6:', \%opts);
+&getopts('H?vM:m:l:i:o:h:p:t:r:w:b:I:C:s:4:6:RED', \%opts);
 
 my $input_mode = 0;
 my $in;
@@ -83,7 +86,7 @@ if (defined($opts{'h'})) {
 if (defined($opts{'p'})) {
 	$port = $opts{'p'};
 }
-if (defined($opts{'r'})) {
+if (defined($opts{'R'})) {
 	$flag_rd = 1;
 }
 if (defined($opts{'m'}) && $opts{'m'} > 0) {
@@ -124,7 +127,7 @@ sub input_line
 		$r = int($r/26);
 		my $c3 = $r % 26;
 		$r = int($r/26);
-		return sprintf("%c%c%c%d.%s %d DE %d", $c1+65, $c2+65, $c3+65, $r, $basedom, rand 1 > 0.5 ? 24 : 1, $waittime);
+		return sprintf("%c%c%c%d.%s %d e %d", $c1+65, $c2+65, $c3+65, $r, $basedom, rand 1 > 0.5 ? 28 : 1, $waittime);
 	}
 	if ($input_mode == 3) {
 		return "version.bind TXT e $waittime";
@@ -153,6 +156,8 @@ while($_ = &input_line) {
 	} else {
 		$remote = pack_sockaddr_in($_port,inet_aton($_host));
 	}
+	#print "[$_]\n";
+	#&hexdump($buf);
 	&wait_recv_send($state, $d[3], $remote, $buf);
 }
 #print "ExitWhile0\n";
@@ -373,11 +378,11 @@ sub packet_encode
 	}
 	$d .= chr(0);
 	my $edns = 0;
-	if ($flag =~ /E/) { $edns = 1; };
 	my $do = 0;
-	my $p = pack("nnnnnn", $qid % 65536, $flag_rd, 1, 0, 0, $edns);
+	if ($flag =~ /D/ || $opts{'D'}) { $do = 1; };
+	if ($flag =~ /E/ || $do || $opts{'E'}) { $edns = 1; }
+	my $p = pack("nnnnnn", $qid % 65536, $flag_rd ? 0x100 : 0, 1, 0, 0, $edns);
 	$qid++;
-	if ($flag =~ /D/) { $do = 1; };
 	$p .= $d.pack("nn", $type, $class);
 	if ($edns) {
 		$p .= chr(0).pack("nnnnn", 41, 4096, 0, $do? 32768:0, 0);
