@@ -288,31 +288,37 @@ sub output_data_pcap
 sub init_wait_recv_send
 {
 	my $z = {};
-	socket (my $s4, PF_INET, SOCK_DGRAM, 0) || die "socket4: $!";
+	my $addr4;
+	my $addr6;
 	my $port = 0;
-	my $addr4 = &get_local_ipv4_address;
-	my $addr6 = &get_local_ipv6_address;
+
 	if ($opts{'s'} > 0) { $port = $opts{'s'}; }
+	$addr4 = &get_local_ipv4_address;
 	if (defined($opts{'4'})) {
 		$addr4 = inet_aton($opts{'4'});
 		if (!defined($addr4)) { die "Cannot understand option: -4 ".$opts{'4'}; }
 	}
+	socket (my $s4, PF_INET, SOCK_DGRAM, 0) || die "socket4: $!";
+	bind($s4, pack_sockaddr_in($port, $addr4)) || die "bind4: $!";
+	setsockopt($s4, SOL_SOCKET, SO_SNDBUF, 220*1024) || die "setsockopt:s4:$!";
+	$z->{s4} = $s4;
+	$z->{s4_sa} = getsockname($s4);
+
+	$addr6 = &get_local_ipv6_address;
 	if (defined($opts{'6'})) {
 		$addr6 = inet_aton($opts{'6'});
 		if (!defined($addr6)) { die "Cannot understand option: -6 ".$opts{'6'}; }
 	}
-	bind($s4, pack_sockaddr_in($port, $addr4)) || die "bind4: $!";
-	setsockopt($s4, SOL_SOCKET, SO_SNDBUF, 220*1024) || die "setsockopt:s4:$!";
-	socket (my $s6, PF_INET6, SOCK_DGRAM, 0) || die "socket6: $!";
-	bind($s6, pack_sockaddr_in6($port, $addr6)) || die "bind6: $!";
-	setsockopt($s6, SOL_SOCKET, SO_SNDBUF, 220*1024) || die "setsockopt:s6:$!";
-
-	$z->{s4} = $s4;
-	$z->{s6} = $s6;
-	$z->{s6_sa} = getsockname($s6);
-	$z->{s4_sa} = getsockname($s4);
-	$z->{sel} = IO::Select->new($s4, $s6);
-
+	if (defined($addr6)) {
+		socket (my $s6, PF_INET6, SOCK_DGRAM, 0) || die "socket6: $!";
+		bind($s6, pack_sockaddr_in6($port, $addr6)) || die "bind6: $!";
+		setsockopt($s6, SOL_SOCKET, SO_SNDBUF, 220*1024) || die "setsockopt:s6:$!";
+		$z->{s6} = $s6;
+		$z->{s6_sa} = getsockname($s6);
+		$z->{sel} = IO::Select->new($s4, $s6);
+	} else {
+		$z->{sel} = IO::Select->new($s4);
+	}
 	$z->{num_sent} = 0;
 	$z->{num_received} = 0;
 	$z->{start} = &gettime;
@@ -358,6 +364,7 @@ sub wait_recv_send
 		$z->{next_send} += $_wait;
 		my $err = 0;
 		my $so = (sockaddr_family($_remote)==AF_INET)?$z->{s4}:$z->{s6};
+		if (!defined($so)) { die "No socket (may be IPv6)"; }
 		my $sa = getsockname($so);
 		$err = send $so, $_payload, 0, $_remote;
 		#print &hexdump($r, "remote=");
@@ -423,8 +430,7 @@ sub get_local_ipv4_address
 		PeerAddr => '198.41.0.4',
 		PeerPort => 53,
 	);
-	my $sa = getsockname($socket);
-	my ($port, $ipv4) = unpack_sockaddr_in($sa);
+	my $ipv4 = $socket->sockaddr;
 	close($socket);
 	return $ipv4;
 }
@@ -436,9 +442,11 @@ sub get_local_ipv6_address
 		PeerAddr => '2001:503:ba3e::2:30',
 		PeerPort => 53,
 	);
-	my $sa = getsockname($socket);
-	my ($port, $ipv6) = unpack_sockaddr_in6($sa);
-	close($socket);
+	my $ipv6 = undef;
+	if (defined ($socket)) {
+		$ipv6 = $socket->sockaddr();
+		close($socket);
+	}
 	return $ipv6;
 }
 
