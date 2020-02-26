@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: dns_replay.pl,v 1.15 2017/02/02 12:01:35 fujiwara Exp $
+# $Id: dns_replay.pl,v 1.21 2020/02/26 04:45:14 fujiwara Exp $
 #
 #  Copyright (C) 1998-2006 Kazunori Fujiwara <fujiwara@wide.ad.jp>.
 #  All rights reserved.
@@ -32,6 +32,7 @@ my $_timeout = 15*1000000;
 my $flag_rd = 0;
 my $mag = 1.0;
 my $count = 100;
+my $override_qtype = -1;
 
 my $usage = "dns_replay.pl [options] [host [port]]
  -M mode    specify output format: [0]/1/2/3=noRecv/dns_replay/dns_replay2/pcap
@@ -48,6 +49,7 @@ my $usage = "dns_replay.pl [options] [host [port]]
  -4 addr    specify query source IP address
  -6 addr    specify query source IPv6 address
  -s port    specify query source port
+ -T type    override QTYPE
  -R         RD=1
  -E         EDNS0
  -D         DO=1
@@ -57,7 +59,7 @@ my $usage = "dns_replay.pl [options] [host [port]]
 \toutput to stdout\n";
 
 my %opts;
-&getopts('H?vM:m:l:i:o:h:p:t:r:w:b:I:C:s:4:6:RED', \%opts);
+&getopts('H?vM:m:l:i:o:h:p:t:r:w:b:I:C:s:4:6:T:RED', \%opts);
 
 my $input_mode = 0;
 my $in;
@@ -91,6 +93,9 @@ if (defined($opts{'R'})) {
 }
 if (defined($opts{'m'}) && $opts{'m'} > 0) {
 	$mag = $opts{'m'} + 0.0;
+}
+if (defined($opts{'T'}) && $opts{'T'} > 0) {
+	$override_qtype = $opts{'T'};
 }
 my $output_format = $opts{'M'};
 $| = 1;
@@ -145,7 +150,9 @@ while($_ = &input_line) {
 		exit 1;
 	}
 	my $remote;
-	my $buf = &packet_encode($d[0], $d[1], $d[2]);
+	my $qtype = $d[1];
+	if ($override_qtype > 0) { $qtype = $override_qtype; }
+	my $buf = &packet_encode($d[0], $qtype, $d[2]);
 	my ($_host, $_port) = ($host, $port);
 	if ($d[2] =~ /d/) {
  		($_host, $_port) = split(/\//, $d[4]);
@@ -156,14 +163,14 @@ while($_ = &input_line) {
 	} else {
 		$remote = pack_sockaddr_in($_port,inet_aton($_host));
 	}
+	&wait_recv_send($state, $d[3]*$mag, $remote, $buf);
 	#print "[$_]\n";
 	#&hexdump($buf);
-	&wait_recv_send($state, $d[3], $remote, $buf);
 }
 #print "ExitWhile0\n";
 my $e = &gettime - $state->{start};
 
-&wait_recv_send($state, 1*1000000);
+&wait_recv_send($state, $waittime*1000000);
 
 if ($e > 0 && $state->{num_sent} > 0) {printf STDERR "Send: %d, %d.%06d sec, %f qps, %d usec\n", $state->{num_sent}, int($e/1000000),$e % 1000000, $state->{num_sent} * 1000000 / $e, $e / $state->{num_sent}; }
 print STDERR "Recv: ".$state->{num_received}."\n";
