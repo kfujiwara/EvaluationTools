@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: dns_replay.pl,v 1.21 2020/02/26 04:45:14 fujiwara Exp $
+# $Id: dns_replay.pl,v 1.26 2020/05/18 18:00:57 fujiwara Exp $
 #
 #  Copyright (C) 1998-2006 Kazunori Fujiwara <fujiwara@wide.ad.jp>.
 #  All rights reserved.
@@ -16,10 +16,10 @@ use strict;
 use Data::Dumper;
 use IO::Select;
 use IO::Socket::INET;
-use IO::Socket::INET6;
-use Time::HiRes qw(usleep gettimeofday tv_interval);
 use Socket;
-use Socket6;
+my $ipv6;
+BEGIN { $ipv6 = eval { require IO::Socket::INET6; require Socket6; }; }
+use Time::HiRes qw(usleep gettimeofday tv_interval);
 use Getopt::Std;
 
 # main
@@ -170,7 +170,7 @@ while($_ = &input_line) {
 #print "ExitWhile0\n";
 my $e = &gettime - $state->{start};
 
-&wait_recv_send($state, $waittime*1000000);
+&wait_recv_send($state, $waittime);
 
 if ($e > 0 && $state->{num_sent} > 0) {printf STDERR "Send: %d, %d.%06d sec, %f qps, %d usec\n", $state->{num_sent}, int($e/1000000),$e % 1000000, $state->{num_sent} * 1000000 / $e, $e / $state->{num_sent}; }
 print STDERR "Recv: ".$state->{num_received}."\n";
@@ -311,7 +311,7 @@ sub init_wait_recv_send
 	$z->{s4} = $s4;
 	$z->{s4_sa} = getsockname($s4);
 
-	$addr6 = &get_local_ipv6_address;
+	if ($ipv6) { $addr6 = &get_local_ipv6_address; }
 	if (defined($opts{'6'})) {
 		$addr6 = inet_aton($opts{'6'});
 		if (!defined($addr6)) { die "Cannot understand option: -6 ".$opts{'6'}; }
