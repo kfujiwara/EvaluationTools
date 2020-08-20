@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: dns_replay.pl,v 1.26 2020/05/18 18:00:57 fujiwara Exp $
+# $Id: dns_replay.pl,v 1.29 2020/07/06 04:44:42 fujiwara Exp $
 #
 #  Copyright (C) 1998-2006 Kazunori Fujiwara <fujiwara@wide.ad.jp>.
 #  All rights reserved.
@@ -13,13 +13,12 @@
 #
 
 use strict;
-use Data::Dumper;
-use IO::Select;
-use IO::Socket::INET;
+#use Data::Dumper;
 use Socket;
+use Socket6;
 my $ipv6;
-BEGIN { $ipv6 = eval { require IO::Socket::INET6; require Socket6; }; }
-use Time::HiRes qw(usleep gettimeofday tv_interval);
+BEGIN { $ipv6 = eval { require Socket6; }; }
+use Time::HiRes qw(gettimeofday);
 use Getopt::Std;
 
 # main
@@ -164,10 +163,7 @@ while($_ = &input_line) {
 		$remote = pack_sockaddr_in($_port,inet_aton($_host));
 	}
 	&wait_recv_send($state, $d[3]*$mag, $remote, $buf);
-	#print "[$_]\n";
-	#&hexdump($buf);
 }
-#print "ExitWhile0\n";
 my $e = &gettime - $state->{start};
 
 &wait_recv_send($state, $waittime);
@@ -284,7 +280,7 @@ sub output_data_pcap
 #         {s6} = IPv6 socket
 #         {s4_sa} = sockaddr s4
 #         {s6_sa} = sockaddr s6
-#         {sel} = IO::Select object
+#         {readfds} = select readable vec
 #         {start} = initialized time (*1000000)
 #         {next_send} = next send time
 #         {num_sent} = number of send udp packets
@@ -301,10 +297,9 @@ sub init_wait_recv_send
 
 	if ($opts{'s'} > 0) { $port = $opts{'s'}; }
 	$addr4 = &get_local_ipv4_address;
-	if (defined($opts{'4'})) {
-		$addr4 = inet_aton($opts{'4'});
-		if (!defined($addr4)) { die "Cannot understand option: -4 ".$opts{'4'}; }
-	}
+	
+	if (defined($opts{'4'})) { $addr4 = inet_aton($opts{'4'}); }
+	if (!defined($addr4)) { die "Cannot understand option: -4 ".$opts{'4'}; }
 	socket (my $s4, PF_INET, SOCK_DGRAM, 0) || die "socket4: $!";
 	bind($s4, pack_sockaddr_in($port, $addr4)) || die "bind4: $!";
 	setsockopt($s4, SOL_SOCKET, SO_SNDBUF, 220*1024) || die "setsockopt:s4:$!";
@@ -316,15 +311,15 @@ sub init_wait_recv_send
 		$addr6 = inet_aton($opts{'6'});
 		if (!defined($addr6)) { die "Cannot understand option: -6 ".$opts{'6'}; }
 	}
+	$z->{readfds} = '';
+	vec($z->{readfds}, fileno($s4), 1) = 1;
 	if (defined($addr6)) {
 		socket (my $s6, PF_INET6, SOCK_DGRAM, 0) || die "socket6: $!";
 		bind($s6, pack_sockaddr_in6($port, $addr6)) || die "bind6: $!";
 		setsockopt($s6, SOL_SOCKET, SO_SNDBUF, 220*1024) || die "setsockopt:s6:$!";
 		$z->{s6} = $s6;
 		$z->{s6_sa} = getsockname($s6);
-		$z->{sel} = IO::Select->new($s4, $s6);
-	} else {
-		$z->{sel} = IO::Select->new($s4);
+		vec($z->{readfds}, fileno($s6), 1) = 1;
 	}
 	$z->{num_sent} = 0;
 	$z->{num_received} = 0;
@@ -352,17 +347,21 @@ sub wait_recv_send
 		$sel_wait = $z->{next_send} - $now;
 		if ($sel_wait < 0) { $sel_wait = 0; }
 		#print STDERR "Wait:$sel_wait\n";
-		my @s = ($z->{sel})->can_read($sel_wait/1000000);
+		my $rfd = $z->{readfds};
+		my ($nfound, $timeleft) = select($rfd, undef, undef, $sel_wait/1000000);
 		$now = &gettime;
-		foreach my $so (@s) {
-		  my $sa = recv $so, $buf, 65535, 0;
-		  my $d_sa = getsockname($so);
-		  if (defined($sa) && length($buf) > 0) {
-			if (defined($z->{output_func})) {
-				$z->{output_func}->('R', $now, $sa, $d_sa, $buf);
+		#print "select: now=$now nfound=$nfound readfds=".&hexdump($rfd)."/".&hexdump($z->{readfds})."\n";
+		foreach my $so ($z->{s4}, $z->{s6}) {
+			if (vec($rfd, fileno($so), 1)) {
+		  		my $sa = recv $so, $buf, 65535, 0;
+		  		my $d_sa = getsockname($so);
+		  		if (defined($sa) && length($buf) > 0) {
+					if (defined($z->{output_func})) {
+						$z->{output_func}->('R', $now, $sa, $d_sa, $buf);
+					}
+					$z->{num_received}++;
+		  		}
 			}
-			$z->{num_received}++;
-		  }
 		}
 		$now = &gettime;
 	} while($now < $z->{next_send});
@@ -432,28 +431,25 @@ sub hexdump
 
 sub get_local_ipv4_address
 {
-	my $socket = IO::Socket::INET->new(
-		Proto => 'udp',
-		PeerAddr => '198.41.0.4',
-		PeerPort => 53,
-	);
-	my $ipv4 = $socket->sockaddr;
-	close($socket);
-	return $ipv4;
+	socket(my $s, PF_INET, SOCK_DGRAM, 0) || die "socket: $!";
+	connect($s, pack_sockaddr_in(53, inet_aton('198.41.0.4'))) || die "connect: $!";
+	my $sa = getsockname($s);
+	close($s);
+	return undef if (!$sa);
+	#my ($addr, $port) = getnameinfo($sa, NI_NUMERICHOST|NI_NUMERICSERV);
+	#print "addr=$addr port=$port\n";
+	my ($port, $iaddr) = sockaddr_in($sa);
+	return $iaddr;
 }
 
 sub get_local_ipv6_address
 {
-	my $socket = IO::Socket::INET6->new(
-		Proto => 'udp',
-		PeerAddr => '2001:503:ba3e::2:30',
-		PeerPort => 53,
-	);
-	my $ipv6 = undef;
-	if (defined ($socket)) {
-		$ipv6 = $socket->sockaddr();
-		close($socket);
-	}
-	return $ipv6;
+	socket (my $s, PF_INET6, SOCK_DGRAM, 0) || die "socket: $!";
+	connect ($s, pack_sockaddr_in6(53, inet_pton(PF_INET6, '2001:503:ba3e::2:30'))) || die "connect: $!";
+	my $sa = getsockname($s);
+	close($s);
+	return undef if (!$sa);
+	my ($port, $iaddr) = sockaddr_in6($sa);
+	return $iaddr;
 }
 
